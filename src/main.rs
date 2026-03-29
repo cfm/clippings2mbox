@@ -290,6 +290,7 @@ fn merge_clippings(clippings: Vec<Clipping>) -> Vec<Clipping> {
                     a.location_end = max_opt(a.location_end, b.location_end);
                     a.date_parsed = min_date(a.date_parsed, b.date_parsed);
                 } else if a.location_end.is_some() && a.location_end == b.location_start {
+                    a.body.push(' ');
                     a.body.push_str(&b.body);
                     a.location_end = b.location_end;
                     a.date_parsed = min_date(a.date_parsed, b.date_parsed);
@@ -438,6 +439,34 @@ the system a thought is given its own designated place, independently of whateve
         );
         assert_eq!(c.location_start, Some(6552));
         assert_eq!(c.location_end, Some(6554));
+    }
+
+    const ADJACENT_PAIR: &str = "\
+\u{feff}The Morning Star (Knausgaard, Karl Ove)
+- Your Highlight on page 52 | Location 900-903 | Added on Friday, September 12, 2025 11:51:23 PM
+
+I missed the discussions we always had, the openness toward the world and life that had felt so much a part of them. Perhaps that openness had been naive, but it was certainly genuine. In those days I'd thought that was how life was going to be. We squandered our time and thoughts, and only when it was over did I understand that it had all been unique and would never return. That is what life is like, is it not? When we're young we think there's more to come, that this is only the beginning, whereas in fact it's all there
+==========
+\u{feff}The Morning Star (Knausgaard, Karl Ove)
+- Your Highlight on page 52 | Location 903-906 | Added on Friday, September 12, 2025 11:51:40 PM
+
+and what we have now, and barely even think about, will soon be the only thing we ever had. There had been no new abundance of friends, only Camilla, Helle and Sigbj\u{f8}rn, and no new abundance of thoughts; the ones we'd had then were the ones we still have now.
+==========";
+
+    #[test]
+    fn test_merge_adjacent() {
+        let clips = parse_clippings(ADJACENT_PAIR);
+        assert_eq!(clips.len(), 2);
+        let merged = merge_clippings(clips);
+        assert_eq!(merged.len(), 1);
+        let c = &merged[0];
+        assert!(
+            c.body.contains("it's all there and what we have now"),
+            "adjacent clips must be joined with a space; got: {:?}",
+            &c.body[c.body.find("there").unwrap_or(0)..],
+        );
+        assert_eq!(c.location_start, Some(900));
+        assert_eq!(c.location_end, Some(906));
     }
 }
 
