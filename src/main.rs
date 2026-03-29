@@ -22,7 +22,7 @@ struct Clipping {
 }
 
 impl Clipping {
-    fn message_id(&self) -> String {
+    fn hdr_message_id(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.title.as_bytes());
         hasher.update(b"\x00");
@@ -38,7 +38,7 @@ impl Clipping {
         format!("<{}@clippings2mbox>", hex)
     }
 
-    fn subject(&self) -> String {
+    fn hdr_subject(&self) -> String {
         let mut s = if self.author_citation.is_empty() {
             format!("\"{}\"", self.title)
         } else {
@@ -50,7 +50,7 @@ impl Clipping {
         s
     }
 
-    fn from_name(&self) -> String {
+    fn hdr_from_name(&self) -> String {
         if self.author.is_empty() {
             let escaped = self.title.replace('\\', "\\\\").replace('"', "\\\"");
             format!("\"{}\"", escaped)
@@ -72,10 +72,10 @@ impl Clipping {
 
         let mut msg = String::new();
         writeln!(msg, "From {} {}", envelope_sender, envelope_date).unwrap();
-        writeln!(msg, "From: {} <{}>", self.from_name(), envelope_sender).unwrap();
+        writeln!(msg, "From: {} <{}>", self.hdr_from_name(), envelope_sender).unwrap();
         writeln!(msg, "Date: {}", date_rfc2822).unwrap();
-        writeln!(msg, "Subject: {}", self.subject()).unwrap();
-        writeln!(msg, "Message-ID: {}", self.message_id()).unwrap();
+        writeln!(msg, "Subject: {}", self.hdr_subject()).unwrap();
+        writeln!(msg, "Message-ID: {}", self.hdr_message_id()).unwrap();
         writeln!(msg, "MIME-Version: 1.0").unwrap();
         writeln!(msg, "Content-Type: text/plain; charset=utf-8").unwrap();
         writeln!(msg).unwrap();
@@ -93,10 +93,7 @@ impl Clipping {
 
 fn parse_date(s: &str) -> Option<NaiveDateTime> {
     let s = s.trim();
-    for fmt in &[
-        "%A, %B %d, %Y %I:%M:%S %p",
-        "%A, %B %d, %Y %H:%M:%S",
-    ] {
+    for fmt in &["%A, %B %d, %Y %I:%M:%S %p", "%A, %B %d, %Y %H:%M:%S"] {
         if let Ok(dt) = NaiveDateTime::parse_from_str(s, fmt) {
             return Some(dt);
         }
@@ -128,7 +125,10 @@ fn parse_clippings(content: &str) -> Vec<Clipping> {
             if let Some(pos) = first_line.rfind('(') {
                 let raw = first_line[pos + 1..first_line.len() - 1].trim();
                 let (author, citation) = if let Some((last, first)) = raw.split_once(',') {
-                    (format!("{} {}", first.trim(), last.trim()), last.trim().to_string())
+                    (
+                        format!("{} {}", first.trim(), last.trim()),
+                        last.trim().to_string(),
+                    )
                 } else {
                     (raw.to_string(), raw.to_string())
                 };
@@ -216,7 +216,7 @@ fn main() {
     let mut skipped = 0;
 
     for clip in &clippings {
-        let id = clip.message_id();
+        let id = clip.hdr_message_id();
         if !seen.insert(id) {
             skipped += 1;
             continue;
