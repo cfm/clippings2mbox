@@ -81,9 +81,15 @@ impl Clipping {
 
         let mut msg = String::new();
         writeln!(msg, "From {} {}", envelope_sender, envelope_date).unwrap();
-        writeln!(msg, "From: {} <{}>", self.hdr_from_name(), envelope_sender).unwrap();
+        writeln!(
+            msg,
+            "From: {} <{}>",
+            rfc2047_encode(&self.hdr_from_name()),
+            envelope_sender
+        )
+        .unwrap();
         writeln!(msg, "Date: {}", date_rfc2822).unwrap();
-        writeln!(msg, "Subject: {}", self.hdr_subject()).unwrap();
+        writeln!(msg, "Subject: {}", rfc2047_encode(&self.hdr_subject())).unwrap();
         writeln!(msg, "Message-ID: {}", self.hdr_message_id()).unwrap();
         if let Some(start) = self.location_start {
             writeln!(msg, "X-Kindle-Location-Start: {}", start).unwrap();
@@ -319,6 +325,20 @@ fn min_date(a: Option<NaiveDateTime>, b: Option<NaiveDateTime>) -> Option<NaiveD
         (Some(x), None) | (None, Some(x)) => Some(x),
         (None, None) => None,
     }
+}
+
+fn rfc2047_encode(s: &str) -> String {
+    let mut encoded = String::new();
+    for byte in s.bytes() {
+        match byte {
+            b' ' => encoded.push('_'),
+            b'=' | b'?' | b'_' | 0..=31 | 127..=255 => {
+                write!(encoded, "={:02X}", byte).unwrap();
+            }
+            _ => encoded.push(byte as char),
+        }
+    }
+    format!("=?UTF-8?Q?{}?=", encoded)
 }
 
 fn read_existing_ids(path: &Path) -> HashSet<String> {
