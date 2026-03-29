@@ -269,7 +269,11 @@ fn merge_clippings(clippings: Vec<Clipping>) -> Vec<Clipping> {
                     a.date_raw = saved_date_raw;
                 }
             } else {
-                let overlap = suffix_prefix_overlap(&a.body, &b.body);
+                let mut overlap = suffix_prefix_overlap(&a.body, &b.body);
+                // Ensure `overlap` is on a valid UTF-8 char boundary before slicing.
+                while overlap > 0 && !b.body.is_char_boundary(overlap) {
+                    overlap -= 1;
+                }
                 if overlap > 0 {
                     let tail = b.body[overlap..].to_string();
                     a.body.push_str(&tail);
