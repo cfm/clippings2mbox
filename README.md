@@ -24,6 +24,10 @@ clippings; duplicates will be skipped.
 - Adjacent and overlapping highlights from the same book are merged into the
   longest contiguous passage.
 
+## Limitations
+
+- No support for Kindle notes, which will be skipped with a warning.
+
 ## Message format
 
 Each highlight becomes a message with:
