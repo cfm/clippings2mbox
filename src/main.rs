@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt::Write as FmtWrite;
 use std::fs::{self, OpenOptions};
@@ -15,7 +15,8 @@ struct Clipping {
     author: String,
     author_citation: String,
     page: Option<String>,
-    location: Option<String>,
+    location_start: Option<u32>,
+    location_end: Option<u32>,
     date_raw: String,
     date_parsed: Option<NaiveDateTime>,
     body: String,
@@ -28,7 +29,11 @@ impl Clipping {
         hasher.update(b"\x00");
         hasher.update(self.author.as_bytes());
         hasher.update(b"\x00");
-        if let Some(ref loc) = self.location {
+        if let Some(start) = self.location_start {
+            let loc = match self.location_end {
+                Some(end) => format!("{}-{}", start, end),
+                None => start.to_string(),
+            };
             hasher.update(loc.as_bytes());
         } else if let Some(ref page) = self.page {
             hasher.update(page.as_bytes());
@@ -76,6 +81,12 @@ impl Clipping {
         writeln!(msg, "Date: {}", date_rfc2822).unwrap();
         writeln!(msg, "Subject: {}", self.hdr_subject()).unwrap();
         writeln!(msg, "Message-ID: {}", self.hdr_message_id()).unwrap();
+        if let Some(start) = self.location_start {
+            writeln!(msg, "X-Kindle-Location-Start: {}", start).unwrap();
+        }
+        if let Some(end) = self.location_end {
+            writeln!(msg, "X-Kindle-Location-End: {}", end).unwrap();
+        }
         writeln!(msg, "MIME-Version: 1.0").unwrap();
         writeln!(msg, "Content-Type: text/plain; charset=utf-8").unwrap();
         writeln!(msg).unwrap();
@@ -103,7 +114,7 @@ fn parse_date(s: &str) -> Option<NaiveDateTime> {
 
 fn parse_clippings(content: &str) -> Vec<Clipping> {
     let page_re = Regex::new(r"(?i)\bpage\s+([\w-]+)").unwrap();
-    let location_re = Regex::new(r"(?i)\blocation\s+(\d[\d-]*)").unwrap();
+    let location_re = Regex::new(r"(?i)\blocation\s+(\d+)(?:-(\d+))?").unwrap();
     let date_re = Regex::new(r"(?i)\bAdded on\s+(.+)$").unwrap();
 
     let mut clippings = Vec::new();
@@ -142,7 +153,13 @@ fn parse_clippings(content: &str) -> Vec<Clipping> {
 
         let meta = lines[1].trim();
         let page = page_re.captures(meta).map(|c| c[1].to_string());
-        let location = location_re.captures(meta).map(|c| c[1].to_string());
+        let (location_start, location_end) = match location_re.captures(meta) {
+            Some(cap) => (
+                cap[1].parse::<u32>().ok(),
+                cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok()),
+            ),
+            None => (None, None),
+        };
         let date_raw = date_re
             .captures(meta)
             .map(|c| c[1].trim().to_string())
@@ -164,7 +181,8 @@ fn parse_clippings(content: &str) -> Vec<Clipping> {
             author,
             author_citation,
             page,
-            location,
+            location_start,
+            location_end,
             date_raw,
             date_parsed,
             body,
@@ -172,6 +190,127 @@ fn parse_clippings(content: &str) -> Vec<Clipping> {
     }
 
     clippings
+}
+
+const MIN_OVERLAP: usize = 10;
+
+fn suffix_prefix_overlap(a: &str, b: &str) -> usize {
+    let (ab, bb) = (a.as_bytes(), b.as_bytes());
+    let max_k = ab.len().min(bb.len());
+    for k in (MIN_OVERLAP..=max_k).rev() {
+        if ab[ab.len() - k..] == bb[..k] {
+            return k;
+        }
+    }
+    0
+}
+
+fn merge_clippings(clippings: Vec<Clipping>) -> Vec<Clipping> {
+    // Record book first-appearance order
+    let mut book_order: Vec<(String, String)> = Vec::new();
+    let mut seen_books: HashSet<(String, String)> = HashSet::new();
+    for clip in &clippings {
+        let key = (clip.title.clone(), clip.author.clone());
+        if seen_books.insert(key.clone()) {
+            book_order.push(key);
+        }
+    }
+
+    // Group by (title, author)
+    let mut groups: HashMap<(String, String), Vec<Clipping>> = HashMap::new();
+    for clip in clippings {
+        let key = (clip.title.clone(), clip.author.clone());
+        groups.entry(key).or_default().push(clip);
+    }
+
+    // Process each group
+    let mut result = Vec::new();
+    for key in book_order {
+        let mut group = groups.remove(&key).unwrap();
+
+        // Sort by location_start asc, then location_end desc (wider range first)
+        group.sort_by(|a, b| {
+            let ls_a = a.location_start.unwrap_or(u32::MAX);
+            let ls_b = b.location_start.unwrap_or(u32::MAX);
+            ls_a.cmp(&ls_b).then_with(|| {
+                let le_a = a.location_end.unwrap_or(0);
+                let le_b = b.location_end.unwrap_or(0);
+                le_b.cmp(&le_a)
+            })
+        });
+
+        // Greedy merge pass
+        let mut merged: Vec<Clipping> = Vec::new();
+        for b in group {
+            if merged.is_empty() {
+                merged.push(b);
+                continue;
+            }
+            let a = merged.last_mut().unwrap();
+            if a.body.contains(b.body.as_str()) {
+                // b is a subset of a
+                a.location_end = max_opt(a.location_end, b.location_end);
+                a.date_parsed = min_date(a.date_parsed, b.date_parsed);
+            } else if b.body.contains(a.body.as_str()) {
+                // a is a subset of b; replace a with b, keeping a's metadata
+                let saved_start = a.location_start;
+                let saved_page = a.page.clone();
+                let saved_date_parsed = a.date_parsed;
+                let saved_date_raw = a.date_raw.clone();
+                *a = b;
+                a.location_start = min_opt(saved_start, a.location_start);
+                a.page = saved_page;
+                if min_date(saved_date_parsed, a.date_parsed) == saved_date_parsed {
+                    a.date_parsed = saved_date_parsed;
+                    a.date_raw = saved_date_raw;
+                }
+            } else {
+                let overlap = suffix_prefix_overlap(&a.body, &b.body);
+                if overlap > 0 {
+                    let tail = b.body[overlap..].to_string();
+                    a.body.push_str(&tail);
+                    a.location_end = max_opt(a.location_end, b.location_end);
+                    a.date_parsed = min_date(a.date_parsed, b.date_parsed);
+                } else if a.location_end.is_some() && a.location_end == b.location_start {
+                    a.body.push_str(&b.body);
+                    a.location_end = b.location_end;
+                    a.date_parsed = min_date(a.date_parsed, b.date_parsed);
+                } else {
+                    merged.push(b);
+                }
+            }
+        }
+
+        // Re-sort by date for mbox ordering
+        merged.sort_by(|a, b| a.date_parsed.cmp(&b.date_parsed));
+        result.extend(merged);
+    }
+
+    result
+}
+
+fn min_opt(a: Option<u32>, b: Option<u32>) -> Option<u32> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (None, None) => None,
+    }
+}
+
+fn max_opt(a: Option<u32>, b: Option<u32>) -> Option<u32> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.max(y)),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (None, None) => None,
+    }
+}
+
+fn min_date(a: Option<NaiveDateTime>, b: Option<NaiveDateTime>) -> Option<NaiveDateTime> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (None, None) => None,
+    }
 }
 
 fn read_existing_ids(path: &Path) -> HashSet<String> {
@@ -201,6 +340,7 @@ fn main() {
     });
 
     let clippings = parse_clippings(&content);
+    let clippings = merge_clippings(clippings);
     let mut seen = read_existing_ids(output);
 
     let mut file = OpenOptions::new()
