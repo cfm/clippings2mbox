@@ -50,7 +50,11 @@ impl Clipping {
             format!("{}, \"{}\"", self.author_citation, self.title)
         };
         if let Some(ref page) = self.page {
-            write!(s, ", {}", page).unwrap();
+            let p = match page.split_once('-') {
+                Some((a, b)) if a == b => a,
+                _ => page.as_str(),
+            };
+            write!(s, ", {}", p).unwrap();
         }
         s
     }
