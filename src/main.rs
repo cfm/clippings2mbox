@@ -454,7 +454,11 @@ fn main() {
             skipped += 1;
             continue;
         }
-        file.write_all(clip.to_mbox().as_bytes()).unwrap();
+        file.write_all(clip.to_mbox().as_bytes())
+            .unwrap_or_else(|e| {
+                eprintln!("Error writing {}: {}", output.display(), e);
+                process::exit(1);
+            });
         added += 1;
     }
 
