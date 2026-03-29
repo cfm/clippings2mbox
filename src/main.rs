@@ -162,6 +162,10 @@ fn parse_clippings(content: &str) -> Vec<Clipping> {
         };
 
         let meta = lines[1].trim();
+        if meta.contains("Your Note") {
+            eprintln!("warning: skipping note in \"{}\" ({})", title, meta);
+            continue;
+        }
         let page = page_re.captures(meta).map(|c| c[1].to_string());
         let (location_start, location_end) = match location_re.captures(meta) {
             Some(cap) => (
@@ -396,6 +400,26 @@ imagine, as indeed I had, many times."
             c.hdr_message_id(),
             "<9af5bd567f2bb98d157aa10aac09d5931401e6b0@clippings2mbox>"
         );
+    }
+
+    const WITH_NOTE: &str = "\
+\u{feff}The Morning Star (Knausgaard, Karl Ove)
+- Your Note on page 309 | Location 5117 | Added on Thursday, September 18, 2025 8:47:00 PM
+
+A personal annotation about the preceding passage.
+==========
+\u{feff}The Morning Star (Knausgaard, Karl Ove)
+- Your Highlight on page 309 | Location 5115-5117 | Added on Thursday, September 18, 2025 8:46:43 PM
+
+I thought to myself, or pictured in my mind—for thoughts come as both pictures and words, a bit like light, which comes as both particles and waves, one could imagine, as indeed I had, many times.
+==========";
+
+    #[test]
+    fn test_note_skipped() {
+        let clips = parse_clippings(WITH_NOTE);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].title, "The Morning Star");
+        assert!(!clips[0].body.contains("personal annotation"));
     }
 
     #[test]
