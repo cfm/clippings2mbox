@@ -423,6 +423,35 @@ I thought to myself, or pictured in my mind—for thoughts come as both pictures
         assert!(!clips[0].body.contains("personal annotation"));
     }
 
+    const OVERLAP_PAIR: &str = "\
+\u{feff}The Morning Star (Knausgaard, Karl Ove)
+- Your Highlight on page 309 | Location 5115-5116 | Added on Thursday, September 18, 2025 8:46:43 PM
+
+I thought to myself, or pictured in my mind\u{2014}for thoughts come as both pictures and words
+==========
+\u{feff}The Morning Star (Knausgaard, Karl Ove)
+- Your Highlight on page 309 | Location 5116-5117 | Added on Thursday, September 18, 2025 8:46:55 PM
+
+as both pictures and words, a bit like light, which comes as both particles and waves, one could imagine, as indeed I had, many times.
+==========";
+
+    #[test]
+    fn test_merge_overlap() {
+        let clips = parse_clippings(OVERLAP_PAIR);
+        assert_eq!(clips.len(), 2);
+        let merged = merge_clippings(clips);
+        assert_eq!(merged.len(), 1);
+        let c = &merged[0];
+        assert_eq!(
+            c.body,
+            "I thought to myself, or pictured in my mind\u{2014}for thoughts come as both \
+pictures and words, a bit like light, which comes as both particles and waves, one could \
+imagine, as indeed I had, many times."
+        );
+        assert_eq!(c.location_start, Some(5115));
+        assert_eq!(c.location_end, Some(5117));
+    }
+
     #[test]
     fn test_merge_subset() {
         let clips = parse_clippings(SUBSET_PAIR);
