@@ -352,6 +352,71 @@ fn read_existing_ids(path: &Path) -> HashSet<String> {
     ids
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SELF_CONTAINED: &str = "\
+\u{feff}The Morning Star (Knausgaard, Karl Ove)
+- Your Highlight on page 309 | Location 5115-5117 | Added on Thursday, September 18, 2025 8:46:43 PM
+
+I thought to myself, or pictured in my mind—for thoughts come as both pictures and words, a bit like light, which comes as both particles and waves, one could imagine, as indeed I had, many times.
+==========";
+
+    const SUBSET_PAIR: &str = "\
+\u{feff}The Morning Star (Knausgaard, Karl Ove)
+- Your Highlight on page 407 | Location 6552-6552 | Added on Friday, September 19, 2025 1:54:25 PM
+
+mistake we make time and again, we think thoughts
+==========
+\u{feff}The Morning Star (Knausgaard, Karl Ove)
+- Your Highlight on page 407 | Location 6552-6554 | Added on Friday, September 19, 2025 1:54:35 PM
+
+But this is a mistake we make time and again, we think thoughts are isolated units, apart not only from our emotions, but also from the surroundings in which they are conceived. Which is probably why philosophers have always been so concerned with building systems, for in the system a thought is given its own designated place, independently of whatever happens outside of it;
+==========";
+
+    #[test]
+    fn test_parse_self_contained() {
+        let clips = parse_clippings(SELF_CONTAINED);
+        assert_eq!(clips.len(), 1);
+        let c = &clips[0];
+        assert_eq!(c.title, "The Morning Star");
+        assert_eq!(c.author, "Karl Ove Knausgaard");
+        assert_eq!(c.author_citation, "Knausgaard");
+        assert_eq!(c.page.as_deref(), Some("309"));
+        assert_eq!(c.location_start, Some(5115));
+        assert_eq!(c.location_end, Some(5117));
+        assert_eq!(
+            c.body,
+            "I thought to myself, or pictured in my mind\u{2014}for thoughts come as both \
+pictures and words, a bit like light, which comes as both particles and waves, one could \
+imagine, as indeed I had, many times."
+        );
+        assert_eq!(
+            c.hdr_message_id(),
+            "<9af5bd567f2bb98d157aa10aac09d5931401e6b0@clippings2mbox>"
+        );
+    }
+
+    #[test]
+    fn test_merge_subset() {
+        let clips = parse_clippings(SUBSET_PAIR);
+        assert_eq!(clips.len(), 2);
+        let merged = merge_clippings(clips);
+        assert_eq!(merged.len(), 1);
+        let c = &merged[0];
+        assert_eq!(
+            c.body,
+            "But this is a mistake we make time and again, we think thoughts are isolated units, \
+apart not only from our emotions, but also from the surroundings in which they are conceived. \
+Which is probably why philosophers have always been so concerned with building systems, for in \
+the system a thought is given its own designated place, independently of whatever happens outside of it;"
+        );
+        assert_eq!(c.location_start, Some(6552));
+        assert_eq!(c.location_end, Some(6554));
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
@@ -389,7 +454,11 @@ fn main() {
             skipped += 1;
             continue;
         }
-        file.write_all(clip.to_mbox().as_bytes()).unwrap();
+        file.write_all(clip.to_mbox().as_bytes())
+            .unwrap_or_else(|e| {
+                eprintln!("Error writing {}: {}", output.display(), e);
+                process::exit(1);
+            });
         added += 1;
     }
 
